@@ -1,0 +1,9 @@
+{
+  "name": "cybake-importer",
+  "version": "1.0.0",
+  "description": "Shopify → Cybake order importer via Netlify Functions",
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.0"
+  }
+}

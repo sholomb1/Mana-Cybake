@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cybake Importer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f6f6f7;
+      color: #202223;
+      padding: 20px;
+      font-size: 13px;
+    }
+
+    /* ── Header ────────────────────────────────────────── */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #202223;
+    }
+    .header .subtitle {
+      font-size: 13px;
+      color: #6d7175;
+      margin-top: 2px;
+    }
+    .refresh-btn {
+      background: #fff;
+      border: 1px solid #c9cccf;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #202223;
+      transition: background 0.15s;
+    }
+    .refresh-btn:hover { background: #f6f6f7; }
+
+    /* ── Stats Cards ───────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: #fff;
+      border: 1px solid #e1e3e5;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-card .label {
+      font-size: 12px;
+      color: #6d7175;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: 600;
+    }
+    .stat-card.total .value { color: #202223; }
+    .stat-card.success .value { color: #008060; }
+    .stat-card.failed .value { color: #d72c0d; }
+    .stat-card.today .value { color: #5c6ac4; }
+
+    /* ── Filter / Search Bar ───────────────────────────── */
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      gap: 12px;
+    }
+    .filter-tabs {
+      display: flex;
+      background: #fff;
+      border: 1px solid #e1e3e5;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .filter-tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      border: none;
+      background: #fff;
+      color: #6d7175;
+      border-right: 1px solid #e1e3e5;
+      transition: all 0.15s;
+    }
+    .filter-tab:last-child { border-right: none; }
+    .filter-tab:hover { background: #f6f6f7; color: #202223; }
+    .filter-tab.active { background: #f1f2f3; color: #202223; font-weight: 600; }
+    .filter-tab .count {
+      display: inline-block;
+      background: #e4e5e7;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      margin-left: 4px;
+      font-weight: 600;
+    }
+    .filter-tab.active.failed-tab .count { background: #fbeae5; color: #d72c0d; }
+    .filter-tab.active.success-tab .count { background: #e3f1df; color: #008060; }
+
+    .search-box {
+      padding: 8px 12px;
+      border: 1px solid #c9cccf;
+      border-radius: 8px;
+      font-size: 13px;
+      width: 260px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .search-box:focus { border-color: #5c6ac4; }
+
+    /* ── Table ──────────────────────────────────────────── */
+    .table-container {
+      background: #fff;
+      border: 1px solid #e1e3e5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6d7175;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fafbfb;
+      border-bottom: 1px solid #e1e3e5;
+    }
+    tbody td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f2f3;
+      vertical-align: top;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafbfb; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-badge.success { background: #e3f1df; color: #008060; }
+    .status-badge.failed { background: #fbeae5; color: #d72c0d; }
+    .status-badge.pending { background: #fff5ea; color: #916a00; }
+
+    .order-link {
+      color: #2c6ecb;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .order-link:hover { text-decoration: underline; }
+
+    .error-text {
+      color: #d72c0d;
+      font-size: 12px;
+      max-width: 300px;
+      word-wrap: break-word;
+    }
+
+    .retry-btn {
+      background: #fff;
+      border: 1px solid #c9cccf;
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      color: #202223;
+      transition: all 0.15s;
+    }
+    .retry-btn:hover { background: #f6f6f7; border-color: #5c6ac4; }
+    .retry-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .retry-btn.retrying {
+      background: #f6f6f7;
+      color: #6d7175;
+    }
+
+    .cybake-id {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+      color: #6d7175;
+    }
+
+    .timestamp {
+      font-size: 12px;
+      color: #6d7175;
+    }
+
+    .order-type-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      background: #edeeef;
+      color: #6d7175;
+    }
+
+    /* ── Pagination ─────────────────────────────────────── */
+    .pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-top: 1px solid #e1e3e5;
+      font-size: 13px;
+      color: #6d7175;
+    }
+    .pagination button {
+      background: #fff;
+      border: 1px solid #c9cccf;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .pagination button:hover:not(:disabled) { background: #f6f6f7; }
+    .pagination button:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Empty State ────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6d7175;
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 16px; color: #202223; margin-bottom: 4px; }
+
+    /* ── Loading ────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #6d7175;
+    }
+    .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 3px solid #e1e3e5;
+      border-top-color: #5c6ac4;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Detail Modal ──────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      width: 640px;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 24px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    }
+    .modal h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: #6d7175;
+      padding: 4px 8px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 8px 16px;
+      font-size: 13px;
+    }
+    .detail-label { color: #6d7175; font-weight: 500; }
+    .detail-value { color: #202223; }
+    .detail-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e1e3e5;
+    }
+    .detail-section h3 {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #6d7175;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    pre.payload {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      overflow-x: auto;
+      max-height: 300px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    /* ── Responsive ─────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .search-box { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>🧁 Cybake Importer</h1>
+      <div class="subtitle">Shopify → Cybake order import status</div>
+    </div>
+    <button class="refresh-btn" onclick="loadData()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z" fill="currentColor"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card total">
+      <div class="label">Total Imports</div>
+      <div class="value" id="statTotal">-</div>
+    </div>
+    <div class="stat-card success">
+      <div class="label">Successful</div>
+      <div class="value" id="statSuccess">-</div>
+    </div>
+    <div class="stat-card failed">
+      <div class="label">Failed</div>
+      <div class="value" id="statFailed">-</div>
+    </div>
+    <div class="stat-card today">
+      <div class="label">Today</div>
+      <div class="value" id="statToday">-</div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="filter-tabs">
+      <button class="filter-tab active" data-filter="all" onclick="setFilter('all', this)">
+        All <span class="count" id="countAll">0</span>
+      </button>
+      <button class="filter-tab success-tab" data-filter="success" onclick="setFilter('success', this)">
+        ✅ Success <span class="count" id="countSuccess">0</span>
+      </button>
+      <button class="filter-tab failed-tab" data-filter="failed" onclick="setFilter('failed', this)">
+        ❌ Failed <span class="count" id="countFailed">0</span>
+      </button>
+    </div>
+    <input type="text" class="search-box" placeholder="Search order # or customer..." id="searchInput" oninput="debounceSearch()">
+  </div>
+
+  <!-- Table -->
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Order</th>
+          <th>Customer</th>
+          <th>Delivery</th>
+          <th>Items</th>
+          <th>Cybake ID</th>
+          <th>Error</th>
+          <th>Time</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="logTableBody">
+        <tr><td colspan="9" class="loading"><div class="spinner"></div><br>Loading...</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination" id="pagination" style="display:none;">
+      <span id="pageInfo"></span>
+      <div style="display:flex;gap:8px;">
+        <button id="prevBtn" onclick="prevPage()">← Previous</button>
+        <button id="nextBtn" onclick="nextPage()">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h2>
+        <span id="modalTitle">Order Detail</span>
+        <button class="modal-close" onclick="document.getElementById('modalOverlay').classList.remove('active')">✕</button>
+      </h2>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──────────────────────────────────────────
+    let currentFilter = 'all';
+    let currentPage = 1;
+    let currentSearch = '';
+    let totalRecords = 0;
+    const PAGE_SIZE = 50;
+
+    // Base URL — detect from current location
+    const BASE_URL = window.location.origin;
+
+    // ── Load Data ──────────────────────────────────────
+    async function loadData() {
+      const params = new URLSearchParams({
+        status: currentFilter,
+        page: currentPage,
+        limit: PAGE_SIZE
+      });
+      if (currentSearch) params.set('search', currentSearch);
+
+      const tbody = document.getElementById('logTableBody');
+      tbody.innerHTML = '<tr><td colspan="9" class="loading"><div class="spinner"></div><br>Loading...</td></tr>';
+
+      try {
+        const res = await fetch(`${BASE_URL}/.netlify/functions/logs?${params}`);
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error || 'Failed to load');
+
+        totalRecords = data.total || 0;
+        const summary = data.summary || {};
+
+        // Update stats
+        document.getElementById('statTotal').textContent = summary.total ?? '-';
+        document.getElementById('statSuccess').textContent = summary.success ?? '-';
+        document.getElementById('statFailed').textContent = summary.failed ?? '-';
+
+        // Today count from data
+        const today = new Date().toISOString().split('T')[0];
+        const todayCount = (data.logs || []).filter(l => l.created_at?.startsWith(today)).length;
+        document.getElementById('statToday').textContent = currentPage === 1 ? todayCount : '-';
+
+        // Update filter counts
+        document.getElementById('countAll').textContent = summary.total ?? 0;
+        document.getElementById('countSuccess').textContent = summary.success ?? 0;
+        document.getElementById('countFailed').textContent = summary.failed ?? 0;
+
+        // Render table
+        renderTable(data.logs || []);
+        renderPagination();
+
+      } catch (err) {
+        console.error('Load error:', err);
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">
+          <div class="icon">⚠️</div>
+          <h3>Error loading data</h3>
+          <p>${err.message}</p>
+        </td></tr>`;
+      }
+    }
+
+    // ── Render Table ───────────────────────────────────
+    function renderTable(logs) {
+      const tbody = document.getElementById('logTableBody');
+
+      if (logs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">
+          <div class="icon">${currentFilter === 'failed' ? '🎉' : '📭'}</div>
+          <h3>${currentFilter === 'failed' ? 'No failed imports!' : 'No imports yet'}</h3>
+          <p>${currentFilter === 'failed' ? 'All orders imported successfully.' : 'Orders will appear here once the Shopify integration is active.'}</p>
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = logs.map(log => {
+        const statusBadge = log.status === 'success'
+          ? '<span class="status-badge success">✓ Success</span>'
+          : log.status === 'failed'
+          ? '<span class="status-badge failed">✕ Failed</span>'
+          : '<span class="status-badge pending">⏳ Pending</span>';
+
+        const time = log.created_at ? formatDate(log.created_at) : '-';
+        const deliveryDate = log.delivery_date ? new Date(log.delivery_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+        const errorHtml = log.error_message
+          ? `<span class="error-text" title="${escapeHtml(log.error_message)}">${truncate(log.error_message, 50)}</span>`
+          : '-';
+        const cybakeId = log.cybake_import_id ? `<span class="cybake-id">${log.cybake_import_id}</span>` : '-';
+        const retryHtml = log.status === 'failed'
+          ? `<button class="retry-btn" onclick="retryImport(${log.id}, this)">Retry</button>`
+          : '';
+        const orderType = log.order_type ? `<span class="order-type-tag">${log.order_type}</span>` : '';
+
+        return `<tr style="cursor:pointer" onclick="showDetail(${log.id}, ${escapeHtmlAttr(JSON.stringify(log))})">
+          <td>${statusBadge}</td>
+          <td><span class="order-link">${escapeHtml(log.order_number)}</span></td>
+          <td>${escapeHtml(log.customer_name || '-')}<br>${orderType}</td>
+          <td>${deliveryDate}</td>
+          <td>${log.line_items_count || 0}</td>
+          <td>${cybakeId}</td>
+          <td>${errorHtml}</td>
+          <td><span class="timestamp">${time}</span></td>
+          <td onclick="event.stopPropagation()">${retryHtml}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ── Detail Modal ───────────────────────────────────
+    function showDetail(id, log) {
+      if (typeof log === 'string') log = JSON.parse(log);
+
+      document.getElementById('modalTitle').textContent = `Order ${log.order_number}`;
+
+      const payloadJson = log.payload_sent ? JSON.stringify(log.payload_sent, null, 2) : 'Not available';
+      const responseJson = log.cybake_response ? JSON.stringify(log.cybake_response, null, 2) : 'Not available';
+
+      document.getElementById('modalContent').innerHTML = `
+        <div class="detail-grid">
+          <div class="detail-label">Status</div>
+          <div class="detail-value">${log.status === 'success' ? '<span class="status-badge success">✓ Success</span>' : '<span class="status-badge failed">✕ Failed</span>'}</div>
+
+          <div class="detail-label">Shopify Order ID</div>
+          <div class="detail-value">${log.shopify_order_id}</div>
+
+          <div class="detail-label">Customer</div>
+          <div class="detail-value">${escapeHtml(log.customer_name || '-')}</div>
+
+          <div class="detail-label">Email</div>
+          <div class="detail-value">${escapeHtml(log.customer_email || '-')}</div>
+
+          <div class="detail-label">Delivery Date</div>
+          <div class="detail-value">${log.delivery_date || '-'}</div>
+
+          <div class="detail-label">Order Type</div>
+          <div class="detail-value">${log.order_type || '-'}</div>
+
+          <div class="detail-label">Line Items</div>
+          <div class="detail-value">${log.line_items_count}</div>
+
+          <div class="detail-label">Order Total</div>
+          <div class="detail-value">$${parseFloat(log.order_total || 0).toFixed(2)}</div>
+
+          <div class="detail-label">Cybake Import ID</div>
+          <div class="detail-value">${log.cybake_import_id || '-'}</div>
+
+          <div class="detail-label">HTTP Status</div>
+          <div class="detail-value">${log.http_status || '-'}</div>
+
+          <div class="detail-label">Retries</div>
+          <div class="detail-value">${log.retry_count || 0}</div>
+
+          <div class="detail-label">Imported At</div>
+          <div class="detail-value">${log.created_at ? new Date(log.created_at).toLocaleString() : '-'}</div>
+
+          ${log.error_message ? `
+          <div class="detail-label">Error</div>
+          <div class="detail-value error-text">${escapeHtml(log.error_message)}</div>
+          ` : ''}
+        </div>
+
+        <div class="detail-section">
+          <h3>Payload Sent to Cybake</h3>
+          <pre class="payload">${escapeHtml(payloadJson)}</pre>
+        </div>
+
+        <div class="detail-section">
+          <h3>Cybake Response</h3>
+          <pre class="payload">${escapeHtml(responseJson)}</pre>
+        </div>
+
+        ${log.status === 'failed' ? `
+        <div class="detail-section" style="text-align:right;">
+          <button class="retry-btn" onclick="retryImport(${log.id}, this)" style="padding:8px 20px;font-size:13px;">
+            🔄 Retry Import
+          </button>
+        </div>` : ''}
+      `;
+
+      document.getElementById('modalOverlay').classList.add('active');
+    }
+
+    function closeModal(event) {
+      if (event.target === event.currentTarget) {
+        document.getElementById('modalOverlay').classList.remove('active');
+      }
+    }
+
+    // ── Retry ──────────────────────────────────────────
+    async function retryImport(logId, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+      btn.classList.add('retrying');
+
+      try {
+        const res = await fetch(`${BASE_URL}/.netlify/functions/retry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ log_id: logId })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          btn.textContent = '✓ Done';
+          btn.style.background = '#e3f1df';
+          btn.style.color = '#008060';
+          setTimeout(() => loadData(), 1000);
+        } else {
+          btn.textContent = 'Failed';
+          btn.style.background = '#fbeae5';
+          btn.style.color = '#d72c0d';
+          setTimeout(() => {
+            btn.textContent = 'Retry';
+            btn.disabled = false;
+            btn.classList.remove('retrying');
+            btn.style.background = '';
+            btn.style.color = '';
+          }, 3000);
+        }
+      } catch (err) {
+        btn.textContent = 'Error';
+        btn.disabled = false;
+        btn.classList.remove('retrying');
+      }
+    }
+
+    // ── Filters & Search ───────────────────────────────
+    function setFilter(filter, btn) {
+      currentFilter = filter;
+      currentPage = 1;
+      document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      loadData();
+    }
+
+    let searchTimeout;
+    function debounceSearch() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        currentSearch = document.getElementById('searchInput').value.trim();
+        currentPage = 1;
+        loadData();
+      }, 400);
+    }
+
+    // ── Pagination ─────────────────────────────────────
+    function renderPagination() {
+      const pag = document.getElementById('pagination');
+      const totalPages = Math.ceil(totalRecords / PAGE_SIZE);
+
+      if (totalPages <= 1) {
+        pag.style.display = 'none';
+        return;
+      }
+      pag.style.display = 'flex';
+      document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages} (${totalRecords} records)`;
+      document.getElementById('prevBtn').disabled = currentPage <= 1;
+      document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+    }
+
+    function prevPage() { if (currentPage > 1) { currentPage--; loadData(); } }
+    function nextPage() { currentPage++; loadData(); }
+
+    // ── Helpers ─────────────────────────────────────────
+    function formatDate(iso) {
+      const d = new Date(iso);
+      const now = new Date();
+      const diffMs = now - d;
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 1) return 'Just now';
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return `${diffHr}h ago`;
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function truncate(str, len) {
+      return str.length > len ? str.substring(0, len) + '...' : str;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function escapeHtmlAttr(str) {
+      return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    // ── Keyboard shortcuts ─────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.getElementById('modalOverlay').classList.remove('active');
+      }
+    });
+
+    // ── Init ───────────────────────────────────────────
+    loadData();
+
+    // Auto-refresh every 30 seconds
+    setInterval(loadData, 30000);
+  </script>
+</body>
+</html>
