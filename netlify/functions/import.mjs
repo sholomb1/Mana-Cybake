@@ -137,7 +137,7 @@ async function fetchShopifyOrder(gid) {
         edges {
           node {
             id sku quantity title name
-            variant { price }
+
             originalUnitPriceSet { shopMoney { amount } }
           }
         }
@@ -157,7 +157,7 @@ async function fetchShopifyOrder(gid) {
   const json = await res.json();
   if (json.errors) {
     console.error('Shopify GraphQL errors:', json.errors);
-    return null;
+    // Don't return null — partial data may still be usable
   }
   return json.data?.order || null;
 }
@@ -293,7 +293,7 @@ function consolidateLineItems(edges) {
     const sku = cleanSku(node.sku);
     if (!sku || !node.quantity || node.quantity <= 0) continue;
 
-    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || node.variant?.price || '0');
+    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || '0');
 
     if (lineMap[sku]) {
       lineMap[sku].Quantity += node.quantity;
