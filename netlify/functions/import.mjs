@@ -9,7 +9,7 @@ const {
 } = process.env;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-const SHOPIFY_API_VERSION = '2024-10';
+const SHOPIFY_API_VERSION = '2025-10';
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 export default async (req, context) => {
@@ -42,32 +42,25 @@ export default async (req, context) => {
 
   try {
     // 1. Fetch full order from Shopify
-    console.log(`=== PROCESSING ORDER ${numericId} ===`);
-    console.log('Order name:', body.order_name);
     const order = await fetchShopifyOrder(gid);
     if (!order) {
-      console.error('Order not found in Shopify for GID:', gid);
       await logImport({ shopify_order_id: numericId, order_number: 'Unknown', status: 'failed', error_message: 'Order not found in Shopify' });
       return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404 });
     }
-    console.log('Shopify order fetched:', order.name, '| Tags:', order.tags?.join(', '));
 
     // 2. Check for duplicate (already imported)
     const existing = await checkDuplicate(numericId);
     if (existing) {
-      console.log('Duplicate detected — already imported with Cybake ID:', existing.cybake_import_id);
       return new Response(JSON.stringify({ message: 'Order already imported', import_id: existing.cybake_import_id }), { status: 200 });
     }
 
     // 3. Transform to Cybake format
     const { payload, meta } = transformOrder(order);
-    console.log('Transformed:', JSON.stringify(meta, null, 2));
 
     // 4. Validate
     const errors = validatePayload(payload);
     if (errors.length > 0) {
       const errorMsg = errors.join('; ');
-      console.error('Validation failed:', errorMsg);
       await logImport({ ...meta, status: 'failed', error_message: `Validation: ${errorMsg}`, payload_sent: payload });
       await tagShopifyOrder(gid, 'Cybake-Failed');
       return new Response(JSON.stringify({ error: 'Validation failed', details: errors }), { status: 400 });
@@ -144,7 +137,7 @@ async function fetchShopifyOrder(gid) {
         edges {
           node {
             id sku quantity title name
-
+            variant { price }
             originalUnitPriceSet { shopMoney { amount } }
           }
         }
@@ -152,9 +145,7 @@ async function fetchShopifyOrder(gid) {
     }
   }`;
 
-  const shopifyUrl = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
-  console.log('Shopify GraphQL URL:', shopifyUrl);
-  const res = await fetch(shopifyUrl, {
+  const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -163,14 +154,10 @@ async function fetchShopifyOrder(gid) {
     body: JSON.stringify({ query, variables: { id: gid } })
   });
 
-  console.log('Shopify response status:', res.status);
   const json = await res.json();
   if (json.errors) {
-    console.error('Shopify GraphQL errors:', JSON.stringify(json.errors, null, 2));
-    // Don't return null — partial data may still be usable
-  }
-  if (!json.data?.order) {
-    console.error('No order in response. Full response:', JSON.stringify(json, null, 2).substring(0, 2000));
+    console.error('Shopify GraphQL errors:', json.errors);
+    return null;
   }
   return json.data?.order || null;
 }
@@ -306,7 +293,7 @@ function consolidateLineItems(edges) {
     const sku = cleanSku(node.sku);
     if (!sku || !node.quantity || node.quantity <= 0) continue;
 
-    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || '0');
+    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || node.variant?.price || '0');
 
     if (lineMap[sku]) {
       lineMap[sku].Quantity += node.quantity;
@@ -360,17 +347,8 @@ function validatePayload(payload) {
 
 // ─── CYBAKE API ───────────────────────────────────────────────────────────────
 async function sendToCybake(payload) {
-  const url = `${CYBAKE_API_URL}/api/home`;
-  console.log('=== CYBAKE REQUEST ===');
-  console.log('URL:', url);
-  console.log('API Key (first 8):', CYBAKE_API_KEY?.substring(0, 8) + '...');
-  console.log('API Version:', CYBAKE_API_VERSION);
-  console.log('Payload orders:', payload.Orders?.length);
-  console.log('First order ID:', payload.Orders?.[0]?.ExternalUniqueIdentifier);
-  console.log('Full payload:', JSON.stringify(payload, null, 2));
-
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`${CYBAKE_API_URL}/api/home`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -380,31 +358,17 @@ async function sendToCybake(payload) {
       body: JSON.stringify(payload)
     });
 
-    console.log('=== CYBAKE RESPONSE ===');
-    console.log('Status:', res.status, res.statusText);
-    console.log('Response headers:', JSON.stringify(Object.fromEntries(res.headers.entries())));
-
     const text = await res.text();
-    console.log('Response body:', text.substring(0, 2000));
-
     let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 2000) }; }
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
     if (res.ok) {
-      console.log('=== CYBAKE SUCCESS ===');
       return { success: true, httpStatus: res.status, data };
     } else {
-      const error = `Cybake returned ${res.status} ${res.statusText}: ${text.substring(0, 1000)}`;
-      console.error('=== CYBAKE FAILURE ===');
-      console.error(error);
-      return { success: false, httpStatus: res.status, data, error };
+      return { success: false, httpStatus: res.status, data, error: `Cybake returned ${res.status}: ${text.substring(0, 500)}` };
     }
   } catch (err) {
-    const error = `Network error calling ${url}: ${err.message}`;
-    console.error('=== CYBAKE NETWORK ERROR ===');
-    console.error(error);
-    console.error('Stack:', err.stack);
-    return { success: false, httpStatus: 0, data: null, error };
+    return { success: false, httpStatus: 0, data: null, error: `Network error: ${err.message}` };
   }
 }
 
@@ -423,7 +387,7 @@ async function logImport(data) {
       status: data.status,
       cybake_import_id: data.cybake_import_id || null,
       http_status: data.http_status || null,
-      error_message: data.error_message?.substring(0, 5000) || null,
+      error_message: data.error_message || null,
       payload_sent: data.payload_sent || null,
       cybake_response: data.cybake_response || null
     });
