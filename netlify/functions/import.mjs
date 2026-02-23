@@ -9,7 +9,7 @@ const {
 } = process.env;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-const SHOPIFY_API_VERSION = '2025-10';
+const SHOPIFY_API_VERSION = '2025-01';
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 export default async (req, context) => {
@@ -42,25 +42,34 @@ export default async (req, context) => {
 
   try {
     // 1. Fetch full order from Shopify
+    console.log(`=== PROCESSING ORDER ${numericId} ===`);
+    console.log('Order name:', body.order_name);
+    console.log('Token check:', SHOPIFY_ACCESS_TOKEN ? `${SHOPIFY_ACCESS_TOKEN.substring(0, 8)}...${SHOPIFY_ACCESS_TOKEN.substring(SHOPIFY_ACCESS_TOKEN.length - 4)} (length: ${SHOPIFY_ACCESS_TOKEN.length})` : 'MISSING');
+    console.log('Store:', SHOPIFY_STORE);
     const order = await fetchShopifyOrder(gid);
     if (!order) {
-      await logImport({ shopify_order_id: numericId, order_number: 'Unknown', status: 'failed', error_message: 'Order not found in Shopify' });
+      console.error('Order not found in Shopify for GID:', gid);
+      await logImport({ shopify_order_id: numericId, order_number: body.order_name || 'Unknown', status: 'failed', error_message: 'Order not found in Shopify' });
       return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404 });
     }
+    console.log('Shopify order fetched:', order.name, '| Tags:', order.tags?.join(', '));
 
     // 2. Check for duplicate (already imported)
     const existing = await checkDuplicate(numericId);
     if (existing) {
+      console.log('Duplicate detected — already imported with Cybake ID:', existing.cybake_import_id);
       return new Response(JSON.stringify({ message: 'Order already imported', import_id: existing.cybake_import_id }), { status: 200 });
     }
 
     // 3. Transform to Cybake format
     const { payload, meta } = transformOrder(order);
+    console.log('Transformed:', JSON.stringify(meta, null, 2));
 
     // 4. Validate
     const errors = validatePayload(payload);
     if (errors.length > 0) {
       const errorMsg = errors.join('; ');
+      console.error('Validation failed:', errorMsg);
       await logImport({ ...meta, status: 'failed', error_message: `Validation: ${errorMsg}`, payload_sent: payload });
       await tagShopifyOrder(gid, 'Cybake-Failed');
       return new Response(JSON.stringify({ error: 'Validation failed', details: errors }), { status: 400 });
@@ -92,12 +101,13 @@ export default async (req, context) => {
       await tagShopifyOrder(gid, 'Cybake-Failed');
     }
 
+    // Return 422 (not 5xx) so Shopify Flow won't retry — we handle retries ourselves
     return new Response(JSON.stringify({
       success: cybakeResult.success,
       order: meta.order_number,
       cybake_import_id: cybakeResult.data?.ImportItemId,
       error: cybakeResult.error || null
-    }), { status: cybakeResult.success ? 200 : 502 });
+    }), { status: cybakeResult.success ? 200 : 422 });
 
   } catch (err) {
     console.error('Unhandled error:', err);
@@ -107,7 +117,7 @@ export default async (req, context) => {
       status: 'failed',
       error_message: `System error: ${err.message}`
     });
-    return new Response(JSON.stringify({ error: 'Internal server error', message: err.message }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'Internal server error', message: err.message }), { status: 422 });
   }
 };
 
@@ -137,7 +147,6 @@ async function fetchShopifyOrder(gid) {
         edges {
           node {
             id sku quantity title name
-            variant { price }
             originalUnitPriceSet { shopMoney { amount } }
           }
         }
@@ -145,7 +154,14 @@ async function fetchShopifyOrder(gid) {
     }
   }`;
 
-  const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+  const shopifyUrl = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  console.log('Shopify GraphQL URL:', shopifyUrl);
+  console.log('Request headers:', JSON.stringify({
+    'Content-Type': 'application/json',
+    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN ? `${SHOPIFY_ACCESS_TOKEN.substring(0, 8)}...(${SHOPIFY_ACCESS_TOKEN.length} chars)` : 'MISSING'
+  }));
+
+  const res = await fetch(shopifyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -154,17 +170,20 @@ async function fetchShopifyOrder(gid) {
     body: JSON.stringify({ query, variables: { id: gid } })
   });
 
+  console.log('Shopify response status:', res.status);
+  console.log('Shopify response headers:', JSON.stringify(Object.fromEntries(res.headers.entries())));
   const json = await res.json();
   if (json.errors) {
-    console.error('Shopify GraphQL errors:', json.errors);
-    return null;
+    console.error('Shopify GraphQL errors:', JSON.stringify(json.errors, null, 2));
+  }
+  if (!json.data?.order) {
+    console.error('No order in response. Full response:', JSON.stringify(json, null, 2).substring(0, 2000));
   }
   return json.data?.order || null;
 }
 
 async function tagShopifyOrder(gid, tag) {
   try {
-    // First get existing tags, then add ours
     const mutation = `mutation addTag($id: ID!, $tags: [String!]!) {
       tagsAdd(id: $id, tags: $tags) {
         userErrors { field message }
@@ -204,7 +223,9 @@ function transformOrder(order) {
   }
   if (tagsParsed.timeWindow) noteParts.push(tagsParsed.timeWindow);
   if (tagsParsed.location) noteParts.push(tagsParsed.location);
-  if (order.note) noteParts.push(`Customer Note: ${order.note}`);
+  if (order.note && order.note.trim() && order.note.trim().toLowerCase() !== 'null') {
+    noteParts.push(`Customer Note: ${order.note.trim()}`);
+  }
 
   const deliveryDate = tagsParsed.deliveryDate || fallbackDeliveryDate(order);
 
@@ -256,11 +277,14 @@ function parseTags(tags) {
   const timePattern = /\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i;
   const datePattern = /^\d{1,2}\s+\w{3,}\s+\d{4}$/;
   const orderTypes = ['local delivery', 'store pickup', 'shipping', 'delivery', 'pickup'];
+  const ignoreTags = ['cybake-imported', 'cybake-failed', 'cybake-pending'];
 
   let timeWindow = null, dateStr = null, deliveryDate = null, orderType = null, location = null, dayOfWeek = null;
 
   for (const tag of tags) {
     const trimmed = tag.trim();
+    // Skip our own system tags
+    if (ignoreTags.includes(trimmed.toLowerCase())) continue;
     if (timePattern.test(trimmed)) {
       timeWindow = trimmed;
     } else if (datePattern.test(trimmed)) {
@@ -293,7 +317,7 @@ function consolidateLineItems(edges) {
     const sku = cleanSku(node.sku);
     if (!sku || !node.quantity || node.quantity <= 0) continue;
 
-    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || node.variant?.price || '0');
+    const price = parseFloat(node.originalUnitPriceSet?.shopMoney?.amount || '0');
 
     if (lineMap[sku]) {
       lineMap[sku].Quantity += node.quantity;
@@ -347,8 +371,17 @@ function validatePayload(payload) {
 
 // ─── CYBAKE API ───────────────────────────────────────────────────────────────
 async function sendToCybake(payload) {
+  const url = `${CYBAKE_API_URL}/api/home`;
+  console.log('=== CYBAKE REQUEST ===');
+  console.log('URL:', url);
+  console.log('API Key (first 8):', CYBAKE_API_KEY?.substring(0, 8) + '...');
+  console.log('API Version:', CYBAKE_API_VERSION);
+  console.log('Payload orders:', payload.Orders?.length);
+  console.log('First order ID:', payload.Orders?.[0]?.ExternalUniqueIdentifier);
+  console.log('Full payload:', JSON.stringify(payload, null, 2));
+
   try {
-    const res = await fetch(`${CYBAKE_API_URL}/api/home`, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -358,24 +391,47 @@ async function sendToCybake(payload) {
       body: JSON.stringify(payload)
     });
 
+    console.log('=== CYBAKE RESPONSE ===');
+    console.log('Status:', res.status, res.statusText);
+    console.log('Response headers:', JSON.stringify(Object.fromEntries(res.headers.entries())));
+
     const text = await res.text();
+    console.log('Response body:', text.substring(0, 2000));
+
     let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 2000) }; }
 
     if (res.ok) {
+      console.log('=== CYBAKE SUCCESS ===');
       return { success: true, httpStatus: res.status, data };
     } else {
-      return { success: false, httpStatus: res.status, data, error: `Cybake returned ${res.status}: ${text.substring(0, 500)}` };
+      const error = `Cybake returned ${res.status} ${res.statusText}: ${text.substring(0, 1000)}`;
+      console.error('=== CYBAKE FAILURE ===');
+      console.error(error);
+      return { success: false, httpStatus: res.status, data, error };
     }
   } catch (err) {
-    return { success: false, httpStatus: 0, data: null, error: `Network error: ${err.message}` };
+    const error = `Network error calling ${url}: ${err.message}`;
+    console.error('=== CYBAKE NETWORK ERROR ===');
+    console.error(error);
+    console.error('Stack:', err.stack);
+    return { success: false, httpStatus: 0, data: null, error };
   }
 }
 
 // ─── SUPABASE LOGGING ─────────────────────────────────────────────────────────
 async function logImport(data) {
   try {
-    await supabase.from('import_logs').insert({
+    // Check if there's already a row for this order
+    const { data: existing } = await supabase
+      .from('import_logs')
+      .select('id, status')
+      .eq('shopify_order_id', data.shopify_order_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const row = {
       shopify_order_id: data.shopify_order_id,
       order_number: data.order_number || 'Unknown',
       customer_name: data.customer_name || null,
@@ -387,10 +443,26 @@ async function logImport(data) {
       status: data.status,
       cybake_import_id: data.cybake_import_id || null,
       http_status: data.http_status || null,
-      error_message: data.error_message || null,
+      error_message: data.error_message?.substring(0, 5000) || null,
       payload_sent: data.payload_sent || null,
-      cybake_response: data.cybake_response || null
-    });
+      cybake_response: data.cybake_response || null,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      // Never overwrite a success with a failure
+      if (existing.status === 'success' && data.status === 'failed') {
+        console.log(`Skipping log update — order ${data.shopify_order_id} already succeeded`);
+        return;
+      }
+      // Update existing row
+      await supabase.from('import_logs').update(row).eq('id', existing.id);
+      console.log(`Updated existing log entry ${existing.id} for order ${data.shopify_order_id}`);
+    } else {
+      // First time seeing this order — insert
+      await supabase.from('import_logs').insert(row);
+      console.log(`Created new log entry for order ${data.shopify_order_id}`);
+    }
   } catch (err) {
     console.error('Failed to log to Supabase:', err.message);
   }
